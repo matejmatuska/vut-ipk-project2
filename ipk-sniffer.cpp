@@ -178,8 +178,13 @@ std::string build_filter(struct args *args)
         first = 0;
     }
 
+    // TODO no port if no filter
     if (args->port >= 0) {
-        filter += " and port " + std::to_string(args->port);
+        // TODO shouldn't the filters be in parentheses
+        if (filter.empty())
+            filter += "port " + std::to_string(args->port);
+        else
+            filter += " and port " + std::to_string(args->port);
     }
 
     return filter;
@@ -267,6 +272,7 @@ void process_ip(const u_char *raw_ip)
             }
             break;
         case IPPROTO_ICMP:
+            // TODO maybe add soem data
             break;
         default:
             cerr << "Unhandled IP protocol: " << hdr->ip_p << endl;
@@ -370,6 +376,7 @@ void process_packet(struct pcap_pkthdr *pkt_hdr, const u_char *raw_pkt)
     cout << format_timestamp(&pkt_hdr->ts) << endl;
 
     struct ether_header *ehdr = (struct ether_header*) raw_pkt;
+    // TODO byte order?
     string src_addr = mac_as_string(ehdr->ether_shost, ETHER_ADDR_LEN);
     string dst_addr = mac_as_string(ehdr->ether_dhost, ETHER_ADDR_LEN);
     cout << "src MAC: " << src_addr << endl;
@@ -457,9 +464,17 @@ int main(int argc, char *argv[])
     const u_char *pkt_data = NULL;
     for (size_t i = 0; i < args.num_packets; i++) {
         int res = pcap_next_ex(handle, &pkt_header, &pkt_data);
-        if (res == PCAP_ERROR) {
-            pcap_perror(handle, "Failed reading packet: ");
-            pcap_close(handle);
+        if (!res) {
+            if (res == PCAP_ERROR) {
+                pcap_perror(handle, "Failed reading packet: ");
+                pcap_close(handle);
+                return 1;
+            }
+            if (res == 0) {
+                cerr << "Buffer timeout" << endl;
+                continue;
+            }
+            cerr << "Failed reading packet" << endl;
             return 1;
         }
         process_packet(pkt_header, pkt_data);
