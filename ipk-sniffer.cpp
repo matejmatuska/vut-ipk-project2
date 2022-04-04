@@ -408,10 +408,6 @@ int main(int argc, char *argv[])
     }
 
     char errbuff[PCAP_ERRBUF_SIZE];
-    if (pcap_init(PCAP_CHAR_ENC_LOCAL, errbuff) == -1) {
-        cerr << "Failed initializing pcap: " << errbuff << endl;
-        return 1;
-    }
 
     if (!args.interface) {
         print_active_devices(errbuff);
