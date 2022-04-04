@@ -5,7 +5,10 @@ BIN=ipk-sniffer
 
 all: $(BIN)
 
+pack: ipk-sniffer.cpp Makefile
+	zip xmatus36.zip $^
+
 clean:
 	-$(RM) $(BIN)
 
-.PHONY: all clean
+.PHONY: all pack clean
