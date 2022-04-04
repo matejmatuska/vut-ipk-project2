@@ -1,11 +1,10 @@
 #include <iostream>
+#include <iomanip>
 #include <string>
 
-#include <cstddef>
-#include <cstdio>
-#include <cstdlib>
+#include <ctime>
 #include <cctype>
-#include <string.h>
+#include <cstring>
 
 #include <pcap/pcap.h>
 
@@ -18,6 +17,9 @@
 #include <netinet/udp.h>
 
 using namespace std;
+
+// IPv6 header length
+#define IP6_HDR_LEN 40;
 
 /**
  * Structure for program arguments
@@ -33,6 +35,9 @@ struct args {
     int arp;
 };
 
+/**
+ * Macros for option parsing
+ */
 #define IF_OPTION(short, long) \
     if (strcmp((short), argv[i]) == 0 || strcmp((long), argv[i]) == 0)
 
@@ -42,16 +47,15 @@ struct args {
 #define IF_S_OPTION(short) \
     if (strcmp((short), argv[i]) == 0)
 
-#define REQUIRE_ARGUMENT()                                                  \
-    do {                                                                    \
-        if (!arg) {                                                         \
-            cerr << "Option" << argv[i] << "requires an argument.\n";       \
-            return 0;                                                       \
-        }                                                                   \
-        i++;                                                                \
+#define REQUIRE_ARGUMENT()                                            \
+    do {                                                              \
+        if (!arg) {                                                   \
+            cerr << "Option" << argv[i] << "requires an argument.\n"; \
+            return 0;                                                 \
+        }                                                             \
+        i++;                                                          \
     } while (0);
 
-// TODO redefinition of args
 /**
  * Parses program arguments into args.
  * If an error is encountered, erorr message is printed to stderr and 0 is returned
@@ -61,18 +65,17 @@ struct args {
  * @param argv arguments, usually from main()
  * @return 1 on success, 0 on error
  */
-int parse_args(struct args *args, int argc, char *argv[])
+bool parse_args(struct args *args, int argc, char *argv[])
 {
-    if (argc == 1) {
-        return 1;
-    }
+    if (argc == 1)
+        return true;
 
     if (argc == 2) {
         if (strcmp("-i", argv[1]) == 0) {
-            return 1;
+            return true;
         } else {
             cerr << "Invalid argument: " << argv[1] << ".\n";
-            return 0;
+            return false;
         }
     }
 
@@ -82,13 +85,14 @@ int parse_args(struct args *args, int argc, char *argv[])
         IF_OPTION("-i", "--interface") {
             REQUIRE_ARGUMENT();
             args->interface = arg;
+
         } else IF_S_OPTION("-p") {
             REQUIRE_ARGUMENT();
             char *rest;
             args->port = strtol(arg, &rest, 10);
             if (*rest != '\0' || args->port < 0) {
                 cerr << "Port must me a positive integer." << endl;
-                return 0;
+                return false;
             }
         } else IF_OPTION("-t", "--tcp") {
             args->tcp = 1;
@@ -104,14 +108,14 @@ int parse_args(struct args *args, int argc, char *argv[])
             args->num_packets = strtoul(arg, &rest, 10);
             if (*rest != '\0' || args->num_packets <= 0) {
                 cerr << "Argument for -n must be a positive integer." << endl;
-                return 0;
+                return false;
             }
         } else {
             cerr << "Invalid arguments: " << argv[i] << ".\n";
-            return 0;
+            return false;
         }
     }
-    return 1;
+    return true;
 }
 
 /**
@@ -142,6 +146,11 @@ int print_active_devices(char *errbuff)
     return 0;
 }
 
+/**
+ * Builds filter for pcap_compile() from program arguments
+ * @param args program arguments
+ * @return filter for pcap_compile
+ */
 std::string build_filter(struct args *args)
 {
     std::string filter;
@@ -176,50 +185,68 @@ std::string build_filter(struct args *args)
     return filter;
 }
 
-#define MAC_FORMAT_BUFSIZ 18
-void format_MAC(char *buff, uint8_t *addr, int addr_len)
-{
-    char *p = buff;
-    for (int i = 0; i < addr_len; i++) {
-        p += sprintf(p, "%02x", addr[i]);
-        if (i < ETHER_ADDR_LEN - 1)
-            *p++ = ':';
-    }
-}
-
-// FIXME buffer overrun
+/**
+ * Prints raw packet to stdout in the following format:
+ *
+ * offset_of_printed_bytes: bytes_hex bytes_ascii
+ *
+ * @param size packet size
+ * @param pkt raw packet
+ */
 void print_raw_pkt(size_t size, const u_char *pkt)
 {
-    unsigned j = 0;
-    while (j < size) {
-        printf("0x%04x: ", j);
+    auto cf = cout.flags();
+
+    cout << hex; // hex is set until reset
+    for (size_t offset = 0; offset < size; offset += 16) {
+        cout << "0x" << setw(4) << setfill('0') << offset << ":  ";
+
         // print bytes in hex
-        for (int i = 0; i < 16; i++) {
-            printf("%02x ", pkt[i + j]);
+        for (size_t i = 0; i < 16; i++) {
+            int c = offset + i < size ? pkt[offset + i] : 0;
+            cout << setw(2) << setfill('0') << c << " ";
+
+            if (i == 7)
+                cout << " ";
         }
-        // print ascii
-        for (int i = 0; i < 16; i++) {
-            u_char c = pkt[i + j];
+        // print bytes in ascii
+        for (size_t i = 0; i < 16; i++) {
+            int c = offset + i < size ? pkt[offset + i] : 0;
             char p = isprint(c) ? c : '.';
-            putchar(p);
+            cout << p;
+
+            if (i == 7)
+                cout << " ";
         }
-        printf("\n");
-        j += 16;
+        cout << endl;
     }
+    cout.flags(cf); // reset flags
 }
 
+/**
+ * Prints source and destination ports from TCP header
+ * @param header TCP header
+ */
 void process_tcp(const struct tcphdr *header)
 {
     cout << "src port: " << ntohs(header->th_sport) << endl;
     cout << "dst port: " << ntohs(header->th_dport) << endl;
 }
 
+/**
+ * Prints source and destination ports from UDP header
+ * @param header UDP header
+ */
 void process_udp(const struct udphdr *header)
 {
     cout << "src port: " << ntohs(header->uh_sport) << endl;
     cout << "dst port: " << ntohs(header->uh_dport) << endl;
 }
 
+/**
+ * Prints information from IPv4 packet
+ * @param raw_ip raw IPv4 header
+ */
 void process_ip(const u_char *raw_ip)
 {
     const struct ip *hdr = reinterpret_cast<const struct ip*>(raw_ip);
@@ -246,6 +273,30 @@ void process_ip(const u_char *raw_ip)
     }
 }
 
+/**
+ * @param addr MAC address as array of bytes 
+ * @param addr_len number of bytes in addr
+ *
+ * @return MAC address in standardized format as string
+ */
+string mac_as_string(const uint8_t *addr, int addr_len)
+{
+    ostringstream stream;
+    stream << hex;
+    int i = 0;
+    while (i < addr_len - 1) {
+        stream << setw(2) << setfill('0') << (int) addr[i] << ':';
+        i++;
+    }
+    stream << setw(2) << setfill('0') << (int) addr[i];
+    return stream.str();
+}
+
+/**
+ * Prints information from IPv6 packet
+ *
+ * @param raw_ip raw IPv6 header
+ */
 void process_ip6(const u_char *raw_ip)
 {
     const struct ip6_hdr *hdr = reinterpret_cast<const struct ip6_hdr*>(raw_ip);
@@ -259,13 +310,13 @@ void process_ip6(const u_char *raw_ip)
     switch (hdr->ip6_nxt) {
         case IPPROTO_TCP:
             {
-                const u_char *raw_tcp = raw_ip + 40;
+                const u_char *raw_tcp = raw_ip + IP6_HDR_LEN;
                 process_tcp(reinterpret_cast<const struct tcphdr*>(raw_tcp));
             }
             break;
         case IPPROTO_UDP:
             {
-                const u_char *raw_udp = raw_ip + 40;
+                const u_char *raw_udp = raw_ip + IP6_HDR_LEN;
                 process_udp(reinterpret_cast<const struct udphdr*>(raw_udp));
             }
             break;
@@ -274,16 +325,54 @@ void process_ip6(const u_char *raw_ip)
         default:
             cerr << "Unhandled IP protocol: " << hdr->ip6_nxt << endl;
     }
-
 }
 
+/**
+ * Returns a string with timestamp ts in RFC 3339 format
+ *
+ * @param ts timestamp
+ * @return string with formatted timestamp
+ */
+string format_timestamp(struct timeval *ts)
+{
+    ostringstream ts_str;
+    struct tm *time = localtime(&(ts->tv_sec));
+    char datetime[32];
+    char offset[16];
+    strftime(datetime, sizeof(datetime) - 1, "%FT%T.", time);
+
+    // format the offset
+    size_t j = strftime(offset, sizeof(offset) - 1, "%z", time); // get offset
+    if (strcmp(offset, "+0000") == 0) {
+        offset[0] = 'Z';
+        offset[1] = '\0';
+    } else {
+        // insert ':' into the offset
+        for (int i = 0; i < 3; i++) {
+            offset[j] = offset[j - 1];
+            j--;
+        }
+        offset[j + 1] = ':';
+    }
+    ts_str << "timestamp: " << datetime;
+    ts_str << fixed << setprecision(3) << ts->tv_usec / 1000 << offset;
+    return ts_str.str();
+}
+
+/**
+ * Processes and prints packets data from raw packet.
+ *
+ * @param pkt_header pcap packet header
+ * @param raw_pkt raw packet
+ */
 void process_packet(struct pcap_pkthdr *pkt_hdr, const u_char *raw_pkt)
 {
-    struct ether_header *ehdr = (struct ether_header*) raw_pkt;
+    cout << format_timestamp(&pkt_hdr->ts) << endl;
 
-    char *src_addr = ether_ntoa(reinterpret_cast<const struct ether_addr*>(ehdr->ether_shost));
+    struct ether_header *ehdr = (struct ether_header*) raw_pkt;
+    string src_addr = mac_as_string(ehdr->ether_shost, ETHER_ADDR_LEN);
+    string dst_addr = mac_as_string(ehdr->ether_dhost, ETHER_ADDR_LEN);
     cout << "src MAC: " << src_addr << endl;
-    char *dst_addr = ether_ntoa(reinterpret_cast<const struct ether_addr*>(ehdr->ether_dhost));
     cout << "dst MAC: " << dst_addr << endl;
 
     cout << "frame length: " << pkt_hdr->len << " bytes" << endl;
@@ -291,19 +380,12 @@ void process_packet(struct pcap_pkthdr *pkt_hdr, const u_char *raw_pkt)
     if (ntohs(ehdr->ether_type) == ETHERTYPE_IP) {
         const u_char *raw_ip = raw_pkt + ETHER_HDR_LEN;
         process_ip(raw_ip);
-
     } else if (ntohs(ehdr->ether_type) == ETHERTYPE_IPV6) {
         const u_char *raw_ip = raw_pkt + ETHER_HDR_LEN;
         process_ip6(raw_ip);
-
-    } else if (ntohs(ehdr->ether_type) == ETHERTYPE_ARP) {
-        cerr << "ARP" << endl;
-    } else {
-        fprintf(stderr, "Unhandled ETHERTYPE: 0x%04x", ntohs(ehdr->ether_type));
     }
-
     print_raw_pkt(pkt_hdr->caplen, raw_pkt);
-    printf("\n");
+    cout << endl;
 }
 
 int main(int argc, char *argv[])
@@ -358,22 +440,21 @@ int main(int argc, char *argv[])
     }
 
     string program = build_filter(&args);
-    //cerr << "program: " << program << endl;
     bpf_program filter;
     if (pcap_compile(handle, &filter, program.c_str(), 1, PCAP_NETMASK_UNKNOWN) == PCAP_ERROR) {
         pcap_perror(handle, "Failed compiling filter: ");
         pcap_close(handle);
         return 1;
     }
-
     if (pcap_setfilter(handle, &filter) == PCAP_ERROR) {
         pcap_perror(handle, "Failed setting filter: ");
         pcap_close(handle);
         return 1;
     }
+    pcap_freecode(&filter);
 
-    struct pcap_pkthdr *pkt_header;
-    const u_char *pkt_data;
+    struct pcap_pkthdr *pkt_header = NULL;
+    const u_char *pkt_data = NULL;
     for (size_t i = 0; i < args.num_packets; i++) {
         int res = pcap_next_ex(handle, &pkt_header, &pkt_data);
         if (res == PCAP_ERROR) {
@@ -381,7 +462,6 @@ int main(int argc, char *argv[])
             pcap_close(handle);
             return 1;
         }
-
         process_packet(pkt_header, pkt_data);
     }
 
