@@ -29,10 +29,10 @@ struct args {
     size_t num_packets;
     int port;
     // filters
-    int tcp;
-    int udp;
-    int icmp;
-    int arp;
+    bool tcp;
+    bool udp;
+    bool icmp;
+    bool arp;
 };
 
 /**
@@ -58,8 +58,8 @@ struct args {
 
 /**
  * Parses program arguments into args.
- * If an error is encountered, erorr message is printed to stderr and 0 is returned
- * 
+ * If an error is encountered, error message is printed to stderr and 0 is returned
+ *
  * @param args structure for arguments
  * @param argc argument count, usually from main()
  * @param argv arguments, usually from main()
@@ -95,13 +95,13 @@ bool parse_args(struct args *args, int argc, char *argv[])
                 return false;
             }
         } else IF_OPTION("-t", "--tcp") {
-            args->tcp = 1;
+            args->tcp = true;
         } else IF_OPTION("-u", "--udp") {
-            args->udp = 1;
+            args->udp = true;
         } else IF_L_OPTION("--arp") {
-            args->arp = 1;
+            args->arp = true;
         } else IF_L_OPTION("--icmp") {
-            args->icmp = 1;
+            args->icmp = true;
         } else IF_S_OPTION("-n"){
             REQUIRE_ARGUMENT();
             char *rest;
@@ -111,7 +111,7 @@ bool parse_args(struct args *args, int argc, char *argv[])
                 return false;
             }
         } else {
-            cerr << "Invalid arguments: " << argv[i] << ".\n";
+            cerr << "Invalid argument: " << argv[i] << ".\n";
             return false;
         }
     }
@@ -120,6 +120,7 @@ bool parse_args(struct args *args, int argc, char *argv[])
 
 /**
  * Prints active network devices to stdout
+ *
  * @pararm errbuff buffer for pcap error messages, see libpcap docs
  * @return nonzero value on success, 0 if an error occured
  */
@@ -137,8 +138,7 @@ int print_active_devices(char *errbuff)
 
     pcap_if_t *device = devices;
     while (device) {
-        if (device->flags & PCAP_IF_RUNNING) // TODO are active RUNNING or UP?
-            // TODO print "any"?
+        if (device->flags & PCAP_IF_RUNNING)
             cout << device->name << endl;
         device = device->next;
     }
@@ -148,39 +148,33 @@ int print_active_devices(char *errbuff)
 
 /**
  * Builds filter for pcap_compile() from program arguments
+ *
  * @param args program arguments
  * @return filter for pcap_compile
  */
-std::string build_filter(struct args *args)
+std::string build_filter(const struct args *args)
 {
     std::string filter;
-    int first = 1;
     if (args->tcp) {
         filter += "tcp";
-        first = 0;
     }
     if (args->udp) {
-        if (!first)
+        if (!filter.empty())
             filter += " or ";
         filter += "udp";
-        first = 0;
     }
     if (args->arp) {
-        if (!first)
+        if (!filter.empty())
             filter += " or ";
         filter += "arp";
-        first = 0;
     }
     if (args->icmp) {
-        if (!first)
+        if (!filter.empty())
             filter += " or ";
         filter += "icmp";
-        first = 0;
     }
 
-    // TODO no port if no filter
     if (args->port >= 0) {
-        // TODO shouldn't the filters be in parentheses
         if (filter.empty())
             filter += "port " + std::to_string(args->port);
         else
@@ -208,17 +202,25 @@ void print_raw_pkt(size_t size, const u_char *pkt)
 
         // print bytes in hex
         for (size_t i = 0; i < 16; i++) {
-            int c = offset + i < size ? pkt[offset + i] : 0;
-            cout << setw(2) << setfill('0') << c << " ";
+            if (offset + i < size) {
+                int c = pkt[offset + i];
+                cout << setw(2) << setfill('0') << c;
+            }
+            else {
+                cout << "  "; // padding
+            }
+            cout << " "; // separator
 
             if (i == 7)
                 cout << " ";
         }
         // print bytes in ascii
         for (size_t i = 0; i < 16; i++) {
-            int c = offset + i < size ? pkt[offset + i] : 0;
-            char p = isprint(c) ? c : '.';
-            cout << p;
+            if (offset + i < size) {
+                int c = pkt[offset + i];
+                char p = isprint(c) ? c : '.';
+                cout << p;
+            }
 
             if (i == 7)
                 cout << " ";
@@ -249,7 +251,9 @@ void process_udp(const struct udphdr *header)
 }
 
 /**
- * Prints information from IPv4 packet
+ * Prints information from IPv4 packet, namely source and destination IP
+ * adresses
+ *
  * @param raw_ip raw IPv4 header
  */
 void process_ip(const u_char *raw_ip)
@@ -272,7 +276,6 @@ void process_ip(const u_char *raw_ip)
             }
             break;
         case IPPROTO_ICMP:
-            // TODO maybe add soem data
             break;
         default:
             cerr << "Unhandled IP protocol: " << hdr->ip_p << endl;
@@ -280,6 +283,8 @@ void process_ip(const u_char *raw_ip)
 }
 
 /**
+ * Formats MAC adress as string
+ *
  * @param addr MAC address as array of bytes 
  * @param addr_len number of bytes in addr
  *
@@ -299,7 +304,8 @@ string mac_as_string(const uint8_t *addr, int addr_len)
 }
 
 /**
- * Prints information from IPv6 packet
+ * Prints information from IPv6 packet, namely source and destination IPv6
+ * adresses.
  *
  * @param raw_ip raw IPv6 header
  */
@@ -335,6 +341,7 @@ void process_ip6(const u_char *raw_ip)
 
 /**
  * Returns a string with timestamp ts in RFC 3339 format
+ * Inspired by: https://stackoverflow.com/a/48772690
  *
  * @param ts timestamp
  * @return string with formatted timestamp
@@ -348,17 +355,17 @@ string format_timestamp(struct timeval *ts)
     strftime(datetime, sizeof(datetime) - 1, "%FT%T.", time);
 
     // format the offset
-    size_t j = strftime(offset, sizeof(offset) - 1, "%z", time); // get offset
+    size_t len = strftime(offset, sizeof(offset) - 1, "%z", time); // get offset
     if (strcmp(offset, "+0000") == 0) {
         offset[0] = 'Z';
         offset[1] = '\0';
     } else {
-        // insert ':' into the offset
+        // move 3 last chars to the right and insert :
         for (int i = 0; i < 3; i++) {
-            offset[j] = offset[j - 1];
-            j--;
+            offset[len] = offset[len - 1];
+            len--;
         }
-        offset[j + 1] = ':';
+        offset[len + 1] = ':';
     }
     ts_str << "timestamp: " << datetime;
     ts_str << fixed << setprecision(3) << ts->tv_usec / 1000 << offset;
@@ -376,7 +383,6 @@ void process_packet(struct pcap_pkthdr *pkt_hdr, const u_char *raw_pkt)
     cout << format_timestamp(&pkt_hdr->ts) << endl;
 
     struct ether_header *ehdr = (struct ether_header*) raw_pkt;
-    // TODO byte order?
     string src_addr = mac_as_string(ehdr->ether_shost, ETHER_ADDR_LEN);
     string dst_addr = mac_as_string(ehdr->ether_dhost, ETHER_ADDR_LEN);
     cout << "src MAC: " << src_addr << endl;
@@ -390,6 +396,7 @@ void process_packet(struct pcap_pkthdr *pkt_hdr, const u_char *raw_pkt)
     } else if (ntohs(ehdr->ether_type) == ETHERTYPE_IPV6) {
         const u_char *raw_ip = raw_pkt + ETHER_HDR_LEN;
         process_ip6(raw_ip);
+    } else if (ntohs(ehdr->ether_type) == ETHERTYPE_ARP) {
     }
     print_raw_pkt(pkt_hdr->caplen, raw_pkt);
     cout << endl;
@@ -442,19 +449,20 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    string program = build_filter(&args);
-    bpf_program filter;
-    if (pcap_compile(handle, &filter, program.c_str(), 1, PCAP_NETMASK_UNKNOWN) == PCAP_ERROR) {
+    string filter = build_filter(&args);
+    cerr << "filter: " << filter << endl;
+    bpf_program prog;
+    if (pcap_compile(handle, &prog, filter.c_str(), 1, PCAP_NETMASK_UNKNOWN) == PCAP_ERROR) {
         pcap_perror(handle, "Failed compiling filter: ");
         pcap_close(handle);
         return 1;
     }
-    if (pcap_setfilter(handle, &filter) == PCAP_ERROR) {
+    if (pcap_setfilter(handle, &prog) == PCAP_ERROR) {
         pcap_perror(handle, "Failed setting filter: ");
         pcap_close(handle);
         return 1;
     }
-    pcap_freecode(&filter);
+    pcap_freecode(&prog);
 
     struct pcap_pkthdr *pkt_header = NULL;
     const u_char *pkt_data = NULL;
