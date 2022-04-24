@@ -1,0 +1,178 @@
+\documentclass{article}
+
+\usepackage[left=1.5cm,text={18cm, 24.5cm},top=2cm]{geometry}
+\usepackage{times}
+
+\usepackage[hidelinks, unicode]{hyperref}
+\usepackage{graphicx}
+\graphicspath{ {images/} }
+
+\begin{document}
+\begin{titlepage}
+    \begin{center}
+        \Huge
+        \textsc{Vysoké učení technické v~Brně\\}
+        \huge
+        \textsc{Fakulta informačních technologií\\}
+        \vspace{\stretch{0.382}}
+        \LARGE
+
+        IPK Project documentation\\
+        Variant Zeta - Packet sniffer
+        \vspace{\stretch{0.618}}
+    \end{center}
+{\Large 2022 \hfill Matej Matuška (xmatus36)}
+\end{titlepage}
+
+\tableofcontents
+\pagebreak
+
+\section{Introduction}
+The goal of this project was to implement a simple packet sniffer program, which
+can listen on different interfaces and capture incoming packets. Packets can be
+filtered by port number and/or protocol.
+
+\section{Design and implementation}
+Program was implemented in C++, which offers easier string manipulation than C.
+The source code is located in single file ipk-sniffer.cpp.
+Capture of packets heavily realies on libpcap library. Parsing, formatting
+and priting of various fields from protocol headers is then managed by the
+program itself. Multiple system headers containing structures representing
+protocol headers are also included:
+\begin{itemize}
+    \item net/ethernet.h
+    \item netinet/ether.h
+    \item netinet/in.h
+    \item netinet/ip.h
+    \item netinet/ip6.h
+    \item netinet/tcp.h
+    \item netinet/udp.h
+\end{itemize}
+
+\subsection{Notable funtions}
+Program is structured into functions, representing different network protocols.
+Functions representing lower layer protocols call funtions representing higher
+level protocols. Because of this structure, program can be easily extended to
+handle other protocols.
+
+Function \texttt{process\_packet()} handles each packet and prints data relevant
+to all packets such as timestamp, MAC adresses and raw bytes. Depending on
+EtherType corresping function is called to further print more data.
+
+Functions \texttt{process\_ip()} and \texttt{process\_ip6} then print IP and
+IPv6 adresses, respectively. And then, depending on enclosed protocol call
+corresponding function to print protocol data.
+
+Functions \texttt{process\_tcp()} and \texttt{process\_udp()} print data
+relevant for these protocols, such as port numbers.
+
+\section{Example output}
+Print one TCP packet from port 80, listen on interface wlp3s0:
+\begin{verbatim}
+> ./ipk-sniffer -i wlp3s0 --tcp -p 80
+timestamp: 2022-04-24T14:27:59.204+02:00
+src MAC: 50:5b:c2:a1:c2:17
+dst MAC: 00:1a:1e:06:87:10
+frame length: 74 bytes
+src IP: 100.64.205.183
+dst IP: 172.64.155.188
+src port: 60028
+dst port: 80
+0x0000:  00 1a 1e 06 87 10 50 5b  c2 a1 c2 17 08 00 45 00 ......P[ ......E.
+0x0010:  00 3c 20 e3 40 00 40 06  9f e4 64 40 cd b7 ac 40 .< .@.@. ..d@...@
+0x0020:  9b bc ea 7c 00 50 b1 49  49 9e 00 00 00 00 a0 02 ...|.P.I I.......
+0x0030:  fa f0 7a 23 00 00 02 04  05 b4 04 02 08 0a be c8 ..z#.... ........
+0x0040:  9b 57 00 00 00 00 01 03  03 07 00 00 00 00 00 00 .W...... ........
+\end{verbatim}
+
+\section{Testing}
+Program was tested intensively during implementation by comparing its outputs
+with outputs from Wireshark, which is a well respected open source program.
+
+\subsection{TCP packet test}
+\begin{figure}[ht]
+    \centering
+    \includegraphics[scale=0.45]{wireshark-tcp.png}
+    \caption{Outuput from WireShark}
+\end{figure}
+\begin{figure}[ht]
+    \centering
+    \includegraphics[scale=0.6]{sniffer-tcp.png}
+    \caption{Outuput from ipk-sniffer}
+\end{figure}
+
+\subsection{UDP packet test}
+\begin{figure}
+    \centering
+    \includegraphics[scale=0.4]{wireshark-udp.png}
+    \caption{Outuput from WireShark}
+\end{figure}
+\begin{figure}
+    \centering
+    \includegraphics[scale=0.4]{sniffer-udp.png}
+    \caption{Outuput from ipk-sniffer}
+\end{figure}
+
+\newpage
+
+\subsection{ICMP packet test}
+\begin{figure}[ht]
+    \centering
+    \includegraphics[scale=0.45]{wireshark-icmp.png}
+    \caption{Outuput from WireShark}
+\end{figure}
+\begin{figure}[ht]
+    \centering
+    \includegraphics[scale=0.6]{sniffer-icmp.png}
+    \caption{Outuput from ipk-sniffer}
+\end{figure}
+
+\newpage
+
+\subsection{ARP packet test}
+\begin{figure}[h]
+    \centering
+    \includegraphics[scale=0.45]{wireshark-arp.png}
+    \caption{Outuput from WireShark}
+\end{figure}
+\begin{figure}[h]
+    \centering
+    \includegraphics[scale=0.6]{sniffer-arp.png}
+    \caption{Outuput from ipk-sniffer}
+\end{figure}
+
+\newpage
+\section{References}
+Sources used while implementing this project:
+\begin{itemize}
+    \item Man page of pcap. Available at:\\
+        \url{https://www.tcpdump.org/manpages/libpcap-1.8.1/pcap.3pcap.html}
+
+    \item I'm trying to build an RFC3339 timestamp in C. How do I get the
+        timezone offset?. \emph{Stack Overflow}. Available at:\\
+        \url{https://stackoverflow.com/a/48772690}
+
+    \item IPv4.\emph{Wikipedia}. Available at:\\
+        \url{https://en.wikipedia.org/wiki/IPv4}
+
+    \item IPv6. \emph{Wikipedia}. Available at:\\
+        \url{https://en.wikipedia.org/wiki/IPv6}
+
+    \item Ethernet frame. \emph{Wikipedia}. Available at:\\
+        \url{https://en.wikipedia.org/wiki/Ethernet_frame}
+
+    \item Address Resolution Protocol. \emph{Wikipedia}. Available at:\\
+        \url{https://en.wikipedia.org/wiki/Address_Resolution_Protocol}
+
+    \item Transmission Control Protocol. \emph{Wikipedia}. Available at:\\
+        \url{https://en.wikipedia.org/wiki/Transmission_Control_Protocol}
+
+    \item User Datagram Protocol. \emph{Wikipedia}. Available at:\\
+        \url{https://en.wikipedia.org/wiki/User_Datagram_Protocol}
+
+    \item Internet Control Message Protocol. \emph{Wikipedia}. Available at:\\
+        \url{https://en.wikipedia.org/wiki/Internet_Control_Message_Protocol}
+
+\end{itemize}
+
+\end{document}
